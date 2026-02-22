@@ -8,9 +8,9 @@ import Signup from "@/pages/Signup";
 import Dashboard from "@/pages/Dashboard";
 import Chat from "@/pages/Chat";
 import Meals from "@/pages/Meals";
+import Recipes from "@/pages/Recipes";
 
 // Placeholder components for other routes
-const Recipes = () => <div className="p-8">Recipes - Coming Soon</div>;
 const Stores = () => <div className="p-8">Stores - Coming Soon</div>;
 const Settings = () => <div className="p-8">Settings - Coming Soon</div>;
 
