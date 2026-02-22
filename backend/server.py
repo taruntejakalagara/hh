@@ -254,7 +254,7 @@ Be concise, friendly, and actionable in your responses."""
         prompt = f"{context}\n\nConversation history:\n" + "\n".join(conversation_history) + f"\n\nuser: {input.message}\n\nassistant:"
         
         response = gemini_client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-1.5-pro',
             contents=prompt
         )
         
