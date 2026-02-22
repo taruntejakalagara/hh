@@ -44,6 +44,10 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 # Emergent LLM Key for image generation
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 
+# Google Places API Key
+GOOGLE_PLACES_API_KEY = os.environ.get('GOOGLE_PLACES_API_KEY')
+gmaps = googlemaps.Client(key=GOOGLE_PLACES_API_KEY) if GOOGLE_PLACES_API_KEY else None
+
 # Create the main app without a prefix
 app = FastAPI()
 
