@@ -157,6 +157,7 @@ const Recipes = () => {
 
   const RecipeCard = ({ recipe }) => (
     <div
+      onClick={() => openRecipeDetail(recipe.id)}
       className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer group"
       data-testid="recipe-card"
     >
