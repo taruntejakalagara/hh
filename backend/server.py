@@ -992,6 +992,33 @@ async def update_theme(input: ThemeUpdate, current_user: dict = Depends(get_curr
     
     return {"message": "Theme updated", "theme": input.theme}
 
+class DeliveryPartnerUpdate(BaseModel):
+    delivery_partner: str  # "instacart", "doordash", "ubereats", "amazon_fresh"
+
+@api_router.put("/users/delivery-partner")
+async def update_delivery_partner(input: DeliveryPartnerUpdate, current_user: dict = Depends(get_current_user)):
+    valid_partners = ["instacart", "doordash", "ubereats", "amazon_fresh"]
+    if input.delivery_partner not in valid_partners:
+        raise HTTPException(status_code=400, detail=f"Invalid delivery partner. Must be one of: {', '.join(valid_partners)}")
+    
+    await db.users.update_one(
+        {"id": current_user['id']},
+        {"$set": {"delivery_partner": input.delivery_partner}}
+    )
+    
+    return {"message": "Delivery partner updated", "delivery_partner": input.delivery_partner}
+
+@api_router.get("/users/me/full")
+async def get_user_full(current_user: dict = Depends(get_current_user)):
+    """Get user with all preferences"""
+    return {
+        "id": current_user['id'],
+        "username": current_user['username'],
+        "email": current_user['email'],
+        "theme": current_user.get('theme', 'light'),
+        "delivery_partner": current_user.get('delivery_partner', 'instacart')
+    }
+
 # ============== STORE INVENTORY MAPPING ==============
 
 STORE_INVENTORIES = {
