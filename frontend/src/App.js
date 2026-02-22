@@ -64,6 +64,14 @@ function App() {
             }
           />
           <Route
+            path="/health"
+            element={
+              <ProtectedRoute>
+                <Health />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <ProtectedRoute>
