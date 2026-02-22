@@ -40,6 +40,9 @@ security = HTTPBearer()
 # Gemini API Key (user provided)
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
+# Emergent LLM Key for image generation
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+
 # Create the main app without a prefix
 app = FastAPI()
 
