@@ -99,6 +99,62 @@ const Recipes = () => {
     }
   };
 
+  const openRecipeDetail = async (recipeId) => {
+    try {
+      const response = await axios.get(`${API}/recipes/${recipeId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSelectedRecipe(response.data);
+      setShowDetailModal(true);
+    } catch (error) {
+      console.error('Failed to load recipe details:', error);
+    }
+  };
+
+  const morphRecipe = async () => {
+    if (!targetCuisine || !selectedRecipe) return;
+
+    setMorphing(true);
+    try {
+      const response = await axios.post(
+        `${API}/recipes/morph`,
+        {
+          recipe_id: selectedRecipe.id,
+          target_cuisine: targetCuisine
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      setMorphResult(response.data);
+      setShowMorphModal(false);
+    } catch (error) {
+      console.error('Failed to morph recipe:', error);
+      alert('Failed to transform recipe. Please try again.');
+    } finally {
+      setMorphing(false);
+    }
+  };
+
+  const saveMorphedRecipe = async () => {
+    if (!morphResult) return;
+
+    try {
+      await axios.post(
+        `${API}/recipes`,
+        morphResult.morphed_recipe,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      
+      alert('Morphed recipe saved successfully!');
+      setMorphResult(null);
+      setShowDetailModal(false);
+      await loadRecipes(false);
+    } catch (error) {
+      console.error('Failed to save morphed recipe:', error);
+      alert('Failed to save recipe. Please try again.');
+    }
+  };
+
   const RecipeCard = ({ recipe }) => (
     <div
       className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer group"
