@@ -15,6 +15,8 @@ from passlib.context import CryptContext
 from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContent
 import base64
 import json
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
