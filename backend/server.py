@@ -182,6 +182,137 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         created_at=datetime.fromisoformat(current_user['created_at']) if isinstance(current_user['created_at'], str) else current_user['created_at']
     )
 
+# ============== CHAT MODELS ==============
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    role: str  # "user" or "assistant"
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ChatMessageCreate(BaseModel):
+    message: str
+
+class ChatMessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    created_at: datetime
+
+class ChatResponse(BaseModel):
+    user_message: ChatMessageResponse
+    assistant_message: ChatMessageResponse
+
+# ============== CHAT ROUTES ==============
+
+@api_router.post("/chat/message", response_model=ChatResponse)
+async def send_chat_message(input: ChatMessageCreate, current_user: dict = Depends(get_current_user)):
+    try:
+        # Create user message
+        user_message = ChatMessage(
+            user_id=current_user['id'],
+            role="user",
+            content=input.message
+        )
+        
+        # Save user message to database
+        user_msg_dict = user_message.model_dump()
+        user_msg_dict['created_at'] = user_msg_dict['created_at'].isoformat()
+        await db.chat_messages.insert_one(user_msg_dict)
+        
+        # Get chat history for context (last 10 messages)
+        history = await db.chat_messages.find(
+            {"user_id": current_user['id']},
+            {"_id": 0}
+        ).sort("created_at", -1).limit(10).to_list(10)
+        history.reverse()  # Oldest first
+        
+        # Build context for Gemini
+        context = f"""You are AI Guardian, a friendly and helpful AI assistant for nutrition, meal planning, and health tracking. 
+You help users with:
+- Meal suggestions and recipes
+- Nutrition advice
+- Meal logging
+- Workout tracking
+- Water intake tracking
+- General health and wellness questions
+
+User's name: {current_user['username']}
+
+Be concise, friendly, and actionable in your responses."""
+
+        # Create Gemini model
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Build conversation history
+        conversation_history = []
+        for msg in history[-5:]:  # Last 5 messages for context
+            conversation_history.append(f"{msg['role']}: {msg['content']}")
+        
+        # Generate response
+        prompt = f"{context}\n\nConversation history:\n" + "\n".join(conversation_history) + f"\n\nuser: {input.message}\n\nassistant:"
+        response = model.generate_content(prompt)
+        
+        assistant_content = response.text
+        
+        # Create assistant message
+        assistant_message = ChatMessage(
+            user_id=current_user['id'],
+            role="assistant",
+            content=assistant_content
+        )
+        
+        # Save assistant message to database
+        assistant_msg_dict = assistant_message.model_dump()
+        assistant_msg_dict['created_at'] = assistant_msg_dict['created_at'].isoformat()
+        await db.chat_messages.insert_one(assistant_msg_dict)
+        
+        return ChatResponse(
+            user_message=ChatMessageResponse(
+                id=user_message.id,
+                role=user_message.role,
+                content=user_message.content,
+                created_at=user_message.created_at
+            ),
+            assistant_message=ChatMessageResponse(
+                id=assistant_message.id,
+                role=assistant_message.role,
+                content=assistant_message.content,
+                created_at=assistant_message.created_at
+            )
+        )
+        
+    except Exception as e:
+        logger.error(f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
+
+@api_router.get("/chat/history", response_model=List[ChatMessageResponse])
+async def get_chat_history(current_user: dict = Depends(get_current_user), limit: int = 50):
+    messages = await db.chat_messages.find(
+        {"user_id": current_user['id']},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    
+    messages.reverse()  # Oldest first
+    
+    return [
+        ChatMessageResponse(
+            id=msg['id'],
+            role=msg['role'],
+            content=msg['content'],
+            created_at=datetime.fromisoformat(msg['created_at']) if isinstance(msg['created_at'], str) else msg['created_at']
+        )
+        for msg in messages
+    ]
+
+@api_router.delete("/chat/history")
+async def clear_chat_history(current_user: dict = Depends(get_current_user)):
+    result = await db.chat_messages.delete_many({"user_id": current_user['id']})
+    return {"deleted_count": result.deleted_count, "message": "Chat history cleared"}
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
