@@ -378,6 +378,210 @@ const Recipes = () => {
           )}
         </div>
       </div>
+
+      {/* Recipe Detail Modal */}
+      {showDetailModal && selectedRecipe && !morphResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowDetailModal(false)}>
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              {/* Header */}
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900 mb-2">{selectedRecipe.title}</h2>
+                  {selectedRecipe.description && (
+                    <p className="text-gray-600">{selectedRecipe.description}</p>
+                  )}
+                </div>
+                <button onClick={() => setShowDetailModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+              </div>
+
+              {/* Meta Info */}
+              <div className="flex flex-wrap gap-4 mb-6 text-sm">
+                {selectedRecipe.prep_time && (
+                  <div className="flex items-center space-x-2">
+                    <span>⏱️</span>
+                    <span className="font-medium">{selectedRecipe.prep_time + (selectedRecipe.cook_time || 0)} min total</span>
+                  </div>
+                )}
+                {selectedRecipe.servings && (
+                  <div className="flex items-center space-x-2">
+                    <span>🍽️</span>
+                    <span className="font-medium">{selectedRecipe.servings} servings</span>
+                  </div>
+                )}
+                {selectedRecipe.calories && (
+                  <div className="flex items-center space-x-2">
+                    <span>🔥</span>
+                    <span className="font-medium">{Math.round(selectedRecipe.calories)} cal</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Ingredients */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Ingredients</h3>
+                <ul className="space-y-2">
+                  {selectedRecipe.ingredients.map((ing, idx) => (
+                    <li key={idx} className="flex items-start">
+                      <span className="text-green-600 mr-2">•</span>
+                      <span>{ing.quantity} {ing.item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Instructions */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Instructions</h3>
+                <ol className="space-y-3">
+                  {selectedRecipe.instructions.map((inst, idx) => (
+                    <li key={idx} className="flex">
+                      <span className="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-sm font-semibold mr-3">
+                        {idx + 1}
+                      </span>
+                      <span className="flex-1">{inst}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              {/* Actions */}
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setShowMorphModal(true)}
+                  className="flex-1 py-3 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700"
+                  data-testid="remix-button"
+                >
+                  🔄 Remix This Recipe
+                </button>
+                <button
+                  onClick={() => toggleSaveRecipe(selectedRecipe.id, selectedRecipe.is_saved)}
+                  className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200"
+                >
+                  {selectedRecipe.is_saved ? '❤️ Saved' : '🤍 Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cuisine Selection Modal */}
+      {showMorphModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowMorphModal(false)}>
+          <div className="bg-white rounded-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-gray-900 mb-4">Choose Target Cuisine</h3>
+            <p className="text-gray-600 mb-6">Transform "{selectedRecipe?.title}" into:</p>
+            
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {cuisines.map((cuisine) => (
+                <button
+                  key={cuisine}
+                  onClick={() => setTargetCuisine(cuisine)}
+                  className={`p-3 rounded-lg border-2 font-medium transition-all ${
+                    targetCuisine === cuisine
+                      ? 'border-purple-500 bg-purple-50 text-purple-700'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  {cuisine}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowMorphModal(false)}
+                className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={morphRecipe}
+                disabled={!targetCuisine || morphing}
+                className="flex-1 py-3 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg font-semibold hover:from-purple-600 hover:to-purple-700 disabled:opacity-50"
+              >
+                {morphing ? 'Transforming...' : 'Transform'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Morph Result Comparison Modal */}
+      {morphResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setMorphResult(null)}>
+          <div className="bg-white rounded-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">Recipe Transformation</h2>
+                <button onClick={() => setMorphResult(null)} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+              </div>
+
+              {/* Explanation */}
+              <div className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                <h3 className="font-semibold text-purple-900 mb-2">What Changed:</h3>
+                <p className="text-sm text-purple-700">{morphResult.changes_explanation}</p>
+              </div>
+
+              {/* Side-by-side Comparison */}
+              <div className="grid md:grid-cols-2 gap-6 mb-6">
+                {/* Original */}
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                    <span className="mr-2">📋</span>
+                    Original Recipe
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-medium text-gray-700 mb-2">Ingredients:</h4>
+                      <ul className="text-sm space-y-1">
+                        {morphResult.original_recipe.ingredients.map((ing, idx) => (
+                          <li key={idx} className="text-gray-600">• {ing.quantity} {ing.item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Morphed */}
+                <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg">
+                  <h3 className="text-lg font-semibold text-purple-900 mb-4 flex items-center">
+                    <span className="mr-2">✨</span>
+                    {targetCuisine} Version
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-medium text-purple-800 mb-2">New Ingredients:</h4>
+                      <ul className="text-sm space-y-1">
+                        {morphResult.morphed_recipe.ingredients.map((ing, idx) => (
+                          <li key={idx} className="text-purple-700">• {ing.quantity} {ing.item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setMorphResult(null)}
+                  className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={saveMorphedRecipe}
+                  className="flex-1 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700"
+                >
+                  ✓ Save {targetCuisine} Version
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
