@@ -992,6 +992,165 @@ async def update_theme(input: ThemeUpdate, current_user: dict = Depends(get_curr
     
     return {"message": "Theme updated", "theme": input.theme}
 
+# ============== STORE INVENTORY MAPPING ==============
+
+STORE_INVENTORIES = {
+    "gas_station": [
+        "jerky", "tuna", "eggs", "coffee", "protein bars", "trail mix", 
+        "chips", "candy", "water", "bananas", "nuts", "snacks"
+    ],
+    "convenience_store": [
+        "sandwiches", "salads", "yogurt", "fruit", "energy drinks", "milk", 
+        "cheese", "hummus", "crackers", "nuts", "bread", "butter", "eggs"
+    ],
+    "pharmacy": [
+        "protein bars", "nuts", "dried fruit", "canned soup", "crackers", 
+        "peanut butter", "granola", "water", "vitamins", "snacks"
+    ],
+    "supermarket": "*",  # All ingredients available
+    "food": [  # Dollar stores
+        "canned beans", "rice", "pasta", "canned tuna", "peanut butter", 
+        "bread", "ramen", "canned vegetables", "oatmeal", "hot sauce", 
+        "eggs", "milk", "cheese", "butter"
+    ]
+}
+
+def recipe_matches_store_inventory(recipe: dict, store_type: str) -> bool:
+    """Check if recipe ingredients are available at store type"""
+    if store_type == "supermarket":
+        return True  # Everything available at supermarket
+    
+    inventory = STORE_INVENTORIES.get(store_type, [])
+    if not inventory:
+        return False
+    
+    # Check if most ingredients are available (allow 20% missing)
+    ingredients = recipe.get('ingredients', [])
+    if not ingredients:
+        return True
+    
+    matched = 0
+    for ing in ingredients:
+        item = ing.get('item', '').lower()
+        # Check if any inventory item is in the ingredient
+        if any(inv_item.lower() in item or item in inv_item.lower() for inv_item in inventory):
+            matched += 1
+    
+    # Allow recipe if at least 80% of ingredients are available
+    match_ratio = matched / len(ingredients)
+    return match_ratio >= 0.8
+
+# ============== STORE MODELS ==============
+
+class NearbyStoresRequest(BaseModel):
+    lat: float
+    lng: float
+
+class StoreInfo(BaseModel):
+    place_id: str
+    name: str
+    address: str
+    lat: float
+    lng: float
+    distance: float  # meters
+    store_type: str
+    open_now: Optional[bool] = None
+
+# ============== STORE ROUTES ==============
+
+@api_router.post("/stores/nearby", response_model=List[StoreInfo])
+async def get_nearby_stores(input: NearbyStoresRequest, current_user: dict = Depends(get_current_user)):
+    if not gmaps:
+        raise HTTPException(status_code=503, detail="Google Places API not configured")
+    
+    try:
+        location = (input.lat, input.lng)
+        stores = []
+        
+        # Search for different store types
+        store_types_to_search = [
+            ("supermarket", "supermarket"),
+            ("gas_station", "gas station"),
+            ("convenience_store", "convenience store"),
+            ("pharmacy", "pharmacy"),
+            ("food", "dollar store")
+        ]
+        
+        for store_type, search_query in store_types_to_search:
+            try:
+                results = gmaps.places_nearby(
+                    location=location,
+                    radius=5000,  # 5km radius
+                    type=store_type if store_type != "food" else None,
+                    keyword=search_query
+                )
+                
+                for place in results.get('results', [])[:2]:  # Top 2 per type
+                    # Calculate distance
+                    place_location = place['geometry']['location']
+                    distance = gmaps.distance_matrix(
+                        origins=[location],
+                        destinations=[(place_location['lat'], place_location['lng'])],
+                        mode="driving"
+                    )
+                    
+                    distance_meters = 0
+                    if distance['rows'] and distance['rows'][0]['elements']:
+                        distance_meters = distance['rows'][0]['elements'][0].get('distance', {}).get('value', 0)
+                    
+                    stores.append(StoreInfo(
+                        place_id=place['place_id'],
+                        name=place['name'],
+                        address=place.get('vicinity', ''),
+                        lat=place_location['lat'],
+                        lng=place_location['lng'],
+                        distance=distance_meters,
+                        store_type=store_type,
+                        open_now=place.get('opening_hours', {}).get('open_now')
+                    ))
+            except Exception as e:
+                logger.warning(f"Failed to fetch {store_type}: {str(e)}")
+                continue
+        
+        # Sort by distance and return top 5
+        stores.sort(key=lambda x: x.distance)
+        return stores[:5]
+        
+    except Exception as e:
+        logger.error(f"Nearby stores error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch nearby stores: {str(e)}")
+
+@api_router.get("/stores/{store_type}/recipes", response_model=List[RecipeResponse])
+async def get_recipes_for_store(
+    store_type: str,
+    current_user: dict = Depends(get_current_user),
+    microwave_only: bool = False
+):
+    # Get all recipes
+    recipes = await db.recipes.find({}, {"_id": 0}).to_list(100)
+    
+    # Filter by store inventory
+    filtered_recipes = []
+    for recipe in recipes:
+        if not recipe_matches_store_inventory(recipe, store_type):
+            continue
+        
+        # Microwave filter (check if recipe has no cook time or mentions microwave)
+        if microwave_only:
+            instructions_text = " ".join(recipe.get('instructions', [])).lower()
+            if recipe.get('cook_time', 0) > 5 and 'microwave' not in instructions_text:
+                continue
+        
+        filtered_recipes.append(
+            RecipeResponse(
+                **{k: v for k, v in recipe.items() if k != 'saved_by'},
+                is_saved=current_user['id'] in recipe.get('saved_by', []),
+                created_at=datetime.fromisoformat(recipe['created_at']) if isinstance(recipe['created_at'], str) else recipe['created_at']
+            )
+        )
+    
+    return filtered_recipes
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
