@@ -13,9 +13,24 @@ const Recipes = () => {
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(false);
   
+  // Recipe detail modal
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  
+  // Recipe morpher
+  const [showMorphModal, setShowMorphModal] = useState(false);
+  const [targetCuisine, setTargetCuisine] = useState('');
+  const [morphing, setMorphing] = useState(false);
+  const [morphResult, setMorphResult] = useState(null);
+  
   // YouTube import state
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [extracting, setExtracting] = useState(false);
+
+  const cuisines = [
+    'Indian', 'Mexican', 'Italian', 'Nigerian', 'American', 
+    'Chinese', 'Japanese', 'Thai', 'Mediterranean', 'Korean'
+  ];
 
   useEffect(() => {
     if (activeTab === 'browse') {
