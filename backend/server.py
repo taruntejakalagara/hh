@@ -245,17 +245,18 @@ User's name: {current_user['username']}
 
 Be concise, friendly, and actionable in your responses."""
 
-        # Create Gemini model
-        model = genai.GenerativeModel('gemini-pro')
-        
         # Build conversation history
         conversation_history = []
         for msg in history[-5:]:  # Last 5 messages for context
             conversation_history.append(f"{msg['role']}: {msg['content']}")
         
-        # Generate response
+        # Generate response with new API
         prompt = f"{context}\n\nConversation history:\n" + "\n".join(conversation_history) + f"\n\nuser: {input.message}\n\nassistant:"
-        response = model.generate_content(prompt)
+        
+        response = gemini_client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
         
         assistant_content = response.text
         
