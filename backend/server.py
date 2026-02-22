@@ -211,26 +211,22 @@ class ChatResponse(BaseModel):
 async def send_chat_message(input: ChatMessageCreate, current_user: dict = Depends(get_current_user)):
     try:
         # Create user message
-        user_message = ChatMessage(
+        user_message_obj = ChatMessage(
             user_id=current_user['id'],
             role="user",
             content=input.message
         )
         
         # Save user message to database
-        user_msg_dict = user_message.model_dump()
+        user_msg_dict = user_message_obj.model_dump()
         user_msg_dict['created_at'] = user_msg_dict['created_at'].isoformat()
         await db.chat_messages.insert_one(user_msg_dict)
         
-        # Get chat history for context (last 10 messages)
-        history = await db.chat_messages.find(
-            {"user_id": current_user['id']},
-            {"_id": 0}
-        ).sort("created_at", -1).limit(10).to_list(10)
-        history.reverse()  # Oldest first
-        
-        # Build context for Gemini
-        context = f"""You are AI Guardian, a friendly and helpful AI assistant for nutrition, meal planning, and health tracking. 
+        # Initialize LLM Chat
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=current_user['id'],
+            system_message=f"""You are AI Guardian, a friendly and helpful AI assistant for nutrition, meal planning, and health tracking. 
 You help users with:
 - Meal suggestions and recipes
 - Nutrition advice
@@ -242,46 +238,38 @@ You help users with:
 User's name: {current_user['username']}
 
 Be concise, friendly, and actionable in your responses."""
-
-        # Build conversation history
-        conversation_history = []
-        for msg in history[-5:]:  # Last 5 messages for context
-            conversation_history.append(f"{msg['role']}: {msg['content']}")
+        ).with_model("gemini", "gemini-2.5-flash")
         
-        # Generate response with new API
-        prompt = f"{context}\n\nConversation history:\n" + "\n".join(conversation_history) + f"\n\nuser: {input.message}\n\nassistant:"
+        # Send message to Gemini
+        user_message = UserMessage(text=input.message)
+        response = await chat.send_message(user_message)
         
-        response = gemini_client.models.generate_content(
-            model='gemini-1.5-pro',
-            contents=prompt
-        )
-        
-        assistant_content = response.text
+        assistant_content = response
         
         # Create assistant message
-        assistant_message = ChatMessage(
+        assistant_message_obj = ChatMessage(
             user_id=current_user['id'],
             role="assistant",
             content=assistant_content
         )
         
         # Save assistant message to database
-        assistant_msg_dict = assistant_message.model_dump()
+        assistant_msg_dict = assistant_message_obj.model_dump()
         assistant_msg_dict['created_at'] = assistant_msg_dict['created_at'].isoformat()
         await db.chat_messages.insert_one(assistant_msg_dict)
         
         return ChatResponse(
             user_message=ChatMessageResponse(
-                id=user_message.id,
-                role=user_message.role,
-                content=user_message.content,
-                created_at=user_message.created_at
+                id=user_message_obj.id,
+                role=user_message_obj.role,
+                content=user_message_obj.content,
+                created_at=user_message_obj.created_at
             ),
             assistant_message=ChatMessageResponse(
-                id=assistant_message.id,
-                role=assistant_message.role,
-                content=assistant_message.content,
-                created_at=assistant_message.created_at
+                id=assistant_message_obj.id,
+                role=assistant_message_obj.role,
+                content=assistant_message_obj.content,
+                created_at=assistant_message_obj.created_at
             )
         )
         
