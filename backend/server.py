@@ -1151,6 +1151,116 @@ async def get_recipes_for_store(
     
     return filtered_recipes
 
+# ============== BIOMETRICS MODELS ==============
+
+class BiometricData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    source: str  # "manual", "whoop", "apple_health", "google_health"
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # General metrics
+    heart_rate: Optional[int] = None  # bpm
+    resting_heart_rate: Optional[int] = None  # bpm
+    hrv: Optional[float] = None  # ms
+    sleep_hours: Optional[float] = None
+    steps: Optional[int] = None
+    active_calories: Optional[int] = None
+    blood_oxygen: Optional[float] = None  # percentage
+    
+    # WHOOP specific
+    recovery_score: Optional[int] = None  # 0-100
+    strain_score: Optional[float] = None  # 0-21
+    sleep_performance: Optional[int] = None  # percentage
+
+class BiometricCreate(BaseModel):
+    source: str = "manual"
+    heart_rate: Optional[int] = None
+    resting_heart_rate: Optional[int] = None
+    hrv: Optional[float] = None
+    sleep_hours: Optional[float] = None
+    steps: Optional[int] = None
+    active_calories: Optional[int] = None
+    blood_oxygen: Optional[float] = None
+    recovery_score: Optional[int] = None
+    strain_score: Optional[float] = None
+    sleep_performance: Optional[int] = None
+
+class BiometricResponse(BaseModel):
+    id: str
+    source: str
+    recorded_at: datetime
+    heart_rate: Optional[int]
+    resting_heart_rate: Optional[int]
+    hrv: Optional[float]
+    sleep_hours: Optional[float]
+    steps: Optional[int]
+    active_calories: Optional[int]
+    blood_oxygen: Optional[float]
+    recovery_score: Optional[int]
+    strain_score: Optional[float]
+    sleep_performance: Optional[int]
+
+# ============== BIOMETRICS ROUTES ==============
+
+@api_router.post("/biometrics/sync-wearable", response_model=BiometricResponse)
+async def sync_wearable_data(input: BiometricCreate, current_user: dict = Depends(get_current_user)):
+    """Sync biometric data from wearables or manual entry"""
+    biometric = BiometricData(
+        user_id=current_user['id'],
+        **input.model_dump()
+    )
+    
+    biometric_dict = biometric.model_dump()
+    biometric_dict['recorded_at'] = biometric_dict['recorded_at'].isoformat()
+    
+    await db.biometrics.insert_one(biometric_dict)
+    
+    return BiometricResponse(**biometric.model_dump())
+
+@api_router.get("/biometrics", response_model=List[BiometricResponse])
+async def get_biometrics(
+    current_user: dict = Depends(get_current_user),
+    limit: int = 50
+):
+    biometrics = await db.biometrics.find(
+        {"user_id": current_user['id']},
+        {"_id": 0}
+    ).sort("recorded_at", -1).limit(limit).to_list(limit)
+    
+    return [
+        BiometricResponse(
+            **{k: v for k, v in bio.items() if k != 'user_id'},
+            recorded_at=datetime.fromisoformat(bio['recorded_at']) if isinstance(bio['recorded_at'], str) else bio['recorded_at']
+        )
+        for bio in biometrics
+    ]
+
+@api_router.get("/biometrics/latest", response_model=BiometricResponse)
+async def get_latest_biometrics(current_user: dict = Depends(get_current_user)):
+    biometric = await db.biometrics.find_one(
+        {"user_id": current_user['id']},
+        {"_id": 0},
+        sort=[("recorded_at", -1)]
+    )
+    
+    if not biometric:
+        raise HTTPException(status_code=404, detail="No biometric data found")
+    
+    return BiometricResponse(
+        **{k: v for k, v in biometric.items() if k != 'user_id'},
+        recorded_at=datetime.fromisoformat(biometric['recorded_at']) if isinstance(biometric['recorded_at'], str) else biometric['recorded_at']
+    )
+
+@api_router.delete("/biometrics/{biometric_id}")
+async def delete_biometric(biometric_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.biometrics.delete_one({"id": biometric_id, "user_id": current_user['id']})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Biometric data not found")
+    return {"message": "Biometric data deleted"}
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
