@@ -11,6 +11,7 @@ import Meals from "@/pages/Meals";
 import Recipes from "@/pages/Recipes";
 import Settings from "@/pages/Settings";
 import Stores from "@/pages/Stores";
+import Health from "@/pages/Health";
 
 function App() {
   return (
