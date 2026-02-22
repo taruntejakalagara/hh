@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone, timedelta, date
 import jwt
 from passlib.context import CryptContext
-from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContent
+from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContent, ImageContent
 import base64
 import json
 from youtube_transcript_api import YouTubeTranscriptApi
