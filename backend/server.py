@@ -245,7 +245,7 @@ User's name: {current_user['username']}
 Be concise, friendly, and actionable in your responses."""
 
         # Create Gemini model
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         # Build conversation history
         conversation_history = []
