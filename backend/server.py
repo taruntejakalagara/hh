@@ -36,7 +36,7 @@ security = HTTPBearer()
 
 # Configure Gemini API
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Create the main app without a prefix
 app = FastAPI()
