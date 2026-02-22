@@ -33,9 +33,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Security
 security = HTTPBearer()
 
-# Configure Gemini API
+# Gemini API Key (user provided)
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Create the main app without a prefix
 app = FastAPI()
