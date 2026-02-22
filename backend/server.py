@@ -520,6 +520,268 @@ Be specific about the food name. For serving size, describe what you see (e.g., 
         logger.error(f"Food recognition error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to recognize food: {str(e)}")
 
+# ============== RECIPE MODELS ==============
+
+class Ingredient(BaseModel):
+    item: str
+    quantity: str
+
+class Recipe(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: Optional[str] = None  # None for public recipes
+    title: str
+    description: Optional[str] = None
+    ingredients: List[Ingredient]
+    instructions: List[str]
+    prep_time: Optional[int] = None  # minutes
+    cook_time: Optional[int] = None  # minutes
+    servings: Optional[int] = None
+    calories: Optional[float] = None
+    protein: Optional[float] = None
+    carbs: Optional[float] = None
+    fat: Optional[float] = None
+    dietary_tags: List[str] = Field(default_factory=list)
+    source_type: str = "manual"  # manual, youtube
+    source_url: Optional[str] = None
+    video_id: Optional[str] = None
+    channel_name: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    image_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    saved_by: List[str] = Field(default_factory=list)  # List of user IDs who saved this
+
+class RecipeCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    ingredients: List[Ingredient]
+    instructions: List[str]
+    prep_time: Optional[int] = None
+    cook_time: Optional[int] = None
+    servings: Optional[int] = None
+    calories: Optional[float] = None
+    protein: Optional[float] = None
+    carbs: Optional[float] = None
+    fat: Optional[float] = None
+    dietary_tags: List[str] = Field(default_factory=list)
+    image_url: Optional[str] = None
+
+class RecipeResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    ingredients: List[Ingredient]
+    instructions: List[str]
+    prep_time: Optional[int]
+    cook_time: Optional[int]
+    servings: Optional[int]
+    calories: Optional[float]
+    protein: Optional[float]
+    carbs: Optional[float]
+    fat: Optional[float]
+    dietary_tags: List[str]
+    source_type: str
+    source_url: Optional[str]
+    video_id: Optional[str]
+    channel_name: Optional[str]
+    thumbnail_url: Optional[str]
+    image_url: Optional[str]
+    created_at: datetime
+    is_saved: bool = False
+
+class YouTubeRecipeRequest(BaseModel):
+    youtube_url: str
+
+# ============== RECIPE ROUTES ==============
+
+def extract_video_id(url: str) -> str:
+    """Extract video ID from YouTube URL"""
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)',
+        r'youtube\.com\/embed\/([^&\n?#]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    raise ValueError("Invalid YouTube URL")
+
+@api_router.post("/recipes", response_model=RecipeResponse)
+async def create_recipe(input: RecipeCreate, current_user: dict = Depends(get_current_user)):
+    recipe = Recipe(
+        user_id=current_user['id'],
+        **input.model_dump()
+    )
+    
+    recipe_dict = recipe.model_dump()
+    recipe_dict['created_at'] = recipe_dict['created_at'].isoformat()
+    
+    await db.recipes.insert_one(recipe_dict)
+    
+    response = RecipeResponse(**recipe.model_dump())
+    response.is_saved = current_user['id'] in recipe.saved_by
+    return response
+
+@api_router.get("/recipes", response_model=List[RecipeResponse])
+async def get_recipes(
+    current_user: dict = Depends(get_current_user),
+    saved_only: bool = False,
+    limit: int = 50
+):
+    query = {}
+    
+    if saved_only:
+        query['saved_by'] = current_user['id']
+    
+    recipes = await db.recipes.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    
+    return [
+        RecipeResponse(
+            **{k: v for k, v in recipe.items() if k != 'saved_by'},
+            is_saved=current_user['id'] in recipe.get('saved_by', []),
+            created_at=datetime.fromisoformat(recipe['created_at']) if isinstance(recipe['created_at'], str) else recipe['created_at']
+        )
+        for recipe in recipes
+    ]
+
+@api_router.get("/recipes/{recipe_id}", response_model=RecipeResponse)
+async def get_recipe(recipe_id: str, current_user: dict = Depends(get_current_user)):
+    recipe = await db.recipes.find_one({"id": recipe_id}, {"_id": 0})
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    
+    return RecipeResponse(
+        **{k: v for k, v in recipe.items() if k != 'saved_by'},
+        is_saved=current_user['id'] in recipe.get('saved_by', []),
+        created_at=datetime.fromisoformat(recipe['created_at']) if isinstance(recipe['created_at'], str) else recipe['created_at']
+    )
+
+@api_router.post("/recipes/{recipe_id}/save")
+async def save_recipe(recipe_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.recipes.update_one(
+        {"id": recipe_id},
+        {"$addToSet": {"saved_by": current_user['id']}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return {"message": "Recipe saved"}
+
+@api_router.post("/recipes/{recipe_id}/unsave")
+async def unsave_recipe(recipe_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.recipes.update_one(
+        {"id": recipe_id},
+        {"$pull": {"saved_by": current_user['id']}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return {"message": "Recipe unsaved"}
+
+@api_router.delete("/recipes/{recipe_id}")
+async def delete_recipe(recipe_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.recipes.delete_one({"id": recipe_id, "user_id": current_user['id']})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Recipe not found or unauthorized")
+    return {"message": "Recipe deleted"}
+
+@api_router.post("/recipes/youtube", response_model=RecipeResponse)
+async def extract_youtube_recipe(input: YouTubeRecipeRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        # Extract video ID
+        video_id = extract_video_id(input.youtube_url)
+        
+        # Fetch transcript
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_text = " ".join([entry['text'] for entry in transcript_list])
+        
+        # Get video metadata (thumbnail)
+        thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+        
+        # Use Gemini to extract recipe
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=f"youtube_recipe_{video_id}",
+            system_message="You are a recipe extraction expert."
+        ).with_model("gemini", "gemini-2.5-flash")
+        
+        prompt = f"""Extract the recipe from this cooking video transcript.
+
+Transcript:
+{transcript_text[:8000]}
+
+Return ONLY a JSON object with these exact fields:
+{{
+    "title": "recipe title",
+    "description": "brief description",
+    "ingredients": [
+        {{"item": "ingredient name", "quantity": "amount"}}
+    ],
+    "instructions": ["step 1", "step 2", ...],
+    "prep_time": prep time in minutes (number or null),
+    "cook_time": cook time in minutes (number or null),
+    "servings": number of servings (number or null),
+    "calories": calories per serving (number or null),
+    "protein": protein in grams (number or null),
+    "carbs": carbs in grams (number or null),
+    "fat": fat in grams (number or null),
+    "dietary_tags": ["tag1", "tag2"],
+    "channel_name": "channel name if mentioned or null"
+}}
+
+If nutritional info is not mentioned, use null. Be specific and detailed."""
+        
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
+        
+        # Parse response
+        response_text = response.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]
+        if response_text.startswith('```'):
+            response_text = response_text[3:]
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        recipe_data = json.loads(response_text)
+        
+        # Create recipe
+        recipe = Recipe(
+            user_id=current_user['id'],
+            title=recipe_data['title'],
+            description=recipe_data.get('description'),
+            ingredients=[Ingredient(**ing) for ing in recipe_data['ingredients']],
+            instructions=recipe_data['instructions'],
+            prep_time=recipe_data.get('prep_time'),
+            cook_time=recipe_data.get('cook_time'),
+            servings=recipe_data.get('servings'),
+            calories=recipe_data.get('calories'),
+            protein=recipe_data.get('protein'),
+            carbs=recipe_data.get('carbs'),
+            fat=recipe_data.get('fat'),
+            dietary_tags=recipe_data.get('dietary_tags', []),
+            source_type="youtube",
+            source_url=input.youtube_url,
+            video_id=video_id,
+            channel_name=recipe_data.get('channel_name'),
+            thumbnail_url=thumbnail_url
+        )
+        
+        recipe_dict = recipe.model_dump()
+        recipe_dict['created_at'] = recipe_dict['created_at'].isoformat()
+        
+        await db.recipes.insert_one(recipe_dict)
+        
+        response = RecipeResponse(**recipe.model_dump())
+        response.is_saved = current_user['id'] in recipe.saved_by
+        return response
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"YouTube recipe extraction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract recipe: {str(e)}")
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
