@@ -914,6 +914,79 @@ Return ONLY a JSON object with these exact fields:
         logger.error(f"Recipe morph error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to morph recipe: {str(e)}")
 
+@api_router.get("/recipes/{recipe_id}/generate-image")
+async def generate_recipe_image(recipe_id: str, current_user: dict = Depends(get_current_user)):
+    try:
+        # Get recipe
+        recipe = await db.recipes.find_one({"id": recipe_id}, {"_id": 0})
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        
+        # Check if image already generated
+        if recipe.get('image_url'):
+            return {"image_url": recipe['image_url'], "cached": True}
+        
+        # Generate image using Gemini Nano Banana
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"recipe_image_{recipe_id}",
+            system_message="You are a food photography AI"
+        ).with_model("gemini", "gemini-3-pro-image-preview").with_params(modalities=["image", "text"])
+        
+        # Create detailed prompt
+        prompt = f"""Create a beautiful food photography image of: {recipe['title']}
+
+Style: Professional overhead shot, clean white plate, natural lighting, appetizing presentation, restaurant quality.
+Focus on making the food look delicious and inviting.
+Composition: centered, good contrast, vibrant colors."""
+        
+        user_message = UserMessage(text=prompt)
+        
+        # Generate image
+        text_response, images = await chat.send_message_multimodal_response(user_message)
+        
+        if not images or len(images) == 0:
+            raise HTTPException(status_code=500, detail="No image generated")
+        
+        # Get first image
+        image_data = images[0]
+        image_base64 = image_data['data']
+        mime_type = image_data['mime_type']
+        
+        # Create data URL
+        image_url = f"data:{mime_type};base64,{image_base64}"
+        
+        # Cache in database (store just first 100 chars for logging)
+        logger.info(f"Generated image for recipe {recipe_id}, data starts with: {image_url[:50]}...")
+        
+        await db.recipes.update_one(
+            {"id": recipe_id},
+            {"$set": {"image_url": image_url}}
+        )
+        
+        return {"image_url": image_url, "cached": False}
+        
+    except Exception as e:
+        logger.error(f"Image generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate image: {str(e)}")
+
+# ============== USER SETTINGS ==============
+
+class ThemeUpdate(BaseModel):
+    theme: str  # "light" or "dark"
+
+@api_router.put("/users/theme")
+async def update_theme(input: ThemeUpdate, current_user: dict = Depends(get_current_user)):
+    if input.theme not in ["light", "dark"]:
+        raise HTTPException(status_code=400, detail="Invalid theme. Must be 'light' or 'dark'")
+    
+    await db.users.update_one(
+        {"id": current_user['id']},
+        {"$set": {"theme": input.theme}}
+    )
+    
+    return {"message": "Theme updated", "theme": input.theme}
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
