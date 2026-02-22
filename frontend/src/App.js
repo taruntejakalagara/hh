@@ -10,9 +10,7 @@ import Chat from "@/pages/Chat";
 import Meals from "@/pages/Meals";
 import Recipes from "@/pages/Recipes";
 import Settings from "@/pages/Settings";
-
-// Placeholder components for other routes
-const Stores = () => <div className="p-8">Stores - Coming Soon</div>;
+import Stores from "@/pages/Stores";
 
 function App() {
   return (
