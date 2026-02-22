@@ -782,6 +782,135 @@ If nutritional info is not mentioned, use null. Be specific and detailed."""
         logger.error(f"YouTube recipe extraction error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to extract recipe: {str(e)}")
 
+class RecipeMorphRequest(BaseModel):
+    recipe_id: str
+    target_cuisine: str
+
+class RecipeMorphResponse(BaseModel):
+    original_recipe: RecipeResponse
+    morphed_recipe: RecipeResponse
+    changes_explanation: str
+
+@api_router.post("/recipes/morph", response_model=RecipeMorphResponse)
+async def morph_recipe(input: RecipeMorphRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        # Get original recipe
+        original_recipe = await db.recipes.find_one({"id": input.recipe_id}, {"_id": 0})
+        if not original_recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        
+        # Prepare original recipe data
+        ingredients_text = "\n".join([f"- {ing['quantity']} {ing['item']}" for ing in original_recipe['ingredients']])
+        instructions_text = "\n".join([f"{i+1}. {inst}" for i, inst in enumerate(original_recipe['instructions'])])
+        
+        # Use Gemini to morph recipe
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=f"recipe_morph_{input.recipe_id}_{input.target_cuisine}",
+            system_message="You are a culinary expert specializing in adapting recipes across different cuisines."
+        ).with_model("gemini", "gemini-2.5-flash")
+        
+        original_cuisine = original_recipe.get('dietary_tags', ['Unknown'])[0] if original_recipe.get('dietary_tags') else 'Unknown'
+        
+        prompt = f"""Transform this {original_cuisine} recipe into {input.target_cuisine} style.
+
+ORIGINAL RECIPE:
+Title: {original_recipe['title']}
+Description: {original_recipe.get('description', 'N/A')}
+
+Ingredients:
+{ingredients_text}
+
+Instructions:
+{instructions_text}
+
+Prep Time: {original_recipe.get('prep_time', 'N/A')} minutes
+Cook Time: {original_recipe.get('cook_time', 'N/A')} minutes
+Servings: {original_recipe.get('servings', 'N/A')}
+
+REQUIREMENTS:
+1. Keep the cooking method similar (e.g., if it's baked, keep it baked)
+2. Maintain similar nutritional profile (calories, protein, carbs, fat)
+3. Replace ingredients with culturally appropriate {input.target_cuisine} alternatives
+4. Adapt spices, seasonings, and flavors to match {input.target_cuisine} cuisine
+5. Keep prep and cook times roughly the same
+
+Return ONLY a JSON object with these exact fields:
+{{
+    "title": "new {input.target_cuisine}-style recipe title",
+    "description": "brief description of the morphed recipe",
+    "ingredients": [
+        {{"item": "ingredient name", "quantity": "amount"}}
+    ],
+    "instructions": ["step 1", "step 2", ...],
+    "prep_time": prep time in minutes (number),
+    "cook_time": cook time in minutes (number),
+    "servings": number of servings (number),
+    "calories": estimated calories (number, similar to original),
+    "protein": protein in grams (number, similar to original),
+    "carbs": carbs in grams (number, similar to original),
+    "fat": fat in grams (number, similar to original),
+    "dietary_tags": ["{input.target_cuisine}", ...other tags],
+    "changes_explanation": "Detailed explanation of what changed and why. Highlight key ingredient substitutions and flavor adaptations."
+}}"""
+        
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
+        
+        # Parse response
+        response_text = response.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]
+        if response_text.startswith('```'):
+            response_text = response_text[3:]
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        morphed_data = json.loads(response_text)
+        changes_explanation = morphed_data.pop('changes_explanation')
+        
+        # Create morphed recipe
+        morphed_recipe = Recipe(
+            user_id=current_user['id'],
+            title=morphed_data['title'],
+            description=morphed_data.get('description'),
+            ingredients=[Ingredient(**ing) for ing in morphed_data['ingredients']],
+            instructions=morphed_data['instructions'],
+            prep_time=morphed_data.get('prep_time'),
+            cook_time=morphed_data.get('cook_time'),
+            servings=morphed_data.get('servings'),
+            calories=morphed_data.get('calories'),
+            protein=morphed_data.get('protein'),
+            carbs=morphed_data.get('carbs'),
+            fat=morphed_data.get('fat'),
+            dietary_tags=morphed_data.get('dietary_tags', [input.target_cuisine]),
+            source_type="morphed",
+            source_url=f"morphed_from_{input.recipe_id}"
+        )
+        
+        # Don't save to DB yet - just return for preview
+        original_response = RecipeResponse(
+            **{k: v for k, v in original_recipe.items() if k != 'saved_by'},
+            is_saved=current_user['id'] in original_recipe.get('saved_by', []),
+            created_at=datetime.fromisoformat(original_recipe['created_at']) if isinstance(original_recipe['created_at'], str) else original_recipe['created_at']
+        )
+        
+        morphed_response = RecipeResponse(**morphed_recipe.model_dump(), is_saved=False)
+        
+        return RecipeMorphResponse(
+            original_recipe=original_response,
+            morphed_recipe=morphed_response,
+            changes_explanation=changes_explanation
+        )
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse morph response: {response}")
+        raise HTTPException(status_code=500, detail="Failed to parse AI response")
+    except Exception as e:
+        logger.error(f"Recipe morph error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to morph recipe: {str(e)}")
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
