@@ -303,6 +303,221 @@ async def clear_chat_history(current_user: dict = Depends(get_current_user)):
     result = await db.chat_messages.delete_many({"user_id": current_user['id']})
     return {"deleted_count": result.deleted_count, "message": "Chat history cleared"}
 
+# ============== MEAL MODELS ==============
+
+class Meal(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    food_name: str
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+    serving_size: str
+    source: str  # "manual" or "photo"
+    confidence: Optional[float] = None
+    logged_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class MealCreate(BaseModel):
+    food_name: str
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+    serving_size: str
+    source: str = "manual"
+
+class MealResponse(BaseModel):
+    id: str
+    food_name: str
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+    serving_size: str
+    source: str
+    confidence: Optional[float]
+    logged_at: datetime
+
+class PhotoRecognitionResult(BaseModel):
+    food_name: str
+    calories: float
+    protein: float
+    carbs: float
+    fat: float
+    serving_size: str
+    confidence: float
+
+class DailyStats(BaseModel):
+    date: str
+    total_calories: float
+    total_protein: float
+    total_carbs: float
+    total_fat: float
+    meal_count: int
+
+# ============== MEAL ROUTES ==============
+
+@api_router.post("/meals", response_model=MealResponse)
+async def create_meal(input: MealCreate, current_user: dict = Depends(get_current_user)):
+    meal = Meal(
+        user_id=current_user['id'],
+        **input.model_dump()
+    )
+    
+    meal_dict = meal.model_dump()
+    meal_dict['logged_at'] = meal_dict['logged_at'].isoformat()
+    
+    await db.meals.insert_one(meal_dict)
+    
+    return MealResponse(**meal.model_dump())
+
+@api_router.get("/meals", response_model=List[MealResponse])
+async def get_meals(
+    current_user: dict = Depends(get_current_user),
+    date_filter: Optional[str] = None,
+    limit: int = 50
+):
+    query = {"user_id": current_user['id']}
+    
+    if date_filter:
+        # Filter by specific date (YYYY-MM-DD format)
+        try:
+            filter_date = datetime.fromisoformat(date_filter).date()
+            start_of_day = datetime.combine(filter_date, datetime.min.time(), tzinfo=timezone.utc)
+            end_of_day = datetime.combine(filter_date, datetime.max.time(), tzinfo=timezone.utc)
+            query['logged_at'] = {
+                '$gte': start_of_day.isoformat(),
+                '$lte': end_of_day.isoformat()
+            }
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    meals = await db.meals.find(query, {"_id": 0}).sort("logged_at", -1).limit(limit).to_list(limit)
+    
+    return [
+        MealResponse(
+            id=meal['id'],
+            food_name=meal['food_name'],
+            calories=meal['calories'],
+            protein=meal['protein'],
+            carbs=meal['carbs'],
+            fat=meal['fat'],
+            serving_size=meal['serving_size'],
+            source=meal['source'],
+            confidence=meal.get('confidence'),
+            logged_at=datetime.fromisoformat(meal['logged_at']) if isinstance(meal['logged_at'], str) else meal['logged_at']
+        )
+        for meal in meals
+    ]
+
+@api_router.delete("/meals/{meal_id}")
+async def delete_meal(meal_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.meals.delete_one({"id": meal_id, "user_id": current_user['id']})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    return {"message": "Meal deleted"}
+
+@api_router.get("/meals/stats/today", response_model=DailyStats)
+async def get_today_stats(current_user: dict = Depends(get_current_user)):
+    today = date.today()
+    start_of_day = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+    end_of_day = datetime.combine(today, datetime.max.time(), tzinfo=timezone.utc)
+    
+    meals = await db.meals.find({
+        "user_id": current_user['id'],
+        "logged_at": {
+            "$gte": start_of_day.isoformat(),
+            "$lte": end_of_day.isoformat()
+        }
+    }, {"_id": 0}).to_list(1000)
+    
+    total_calories = sum(meal['calories'] for meal in meals)
+    total_protein = sum(meal['protein'] for meal in meals)
+    total_carbs = sum(meal['carbs'] for meal in meals)
+    total_fat = sum(meal['fat'] for meal in meals)
+    
+    return DailyStats(
+        date=today.isoformat(),
+        total_calories=total_calories,
+        total_protein=total_protein,
+        total_carbs=total_carbs,
+        total_fat=total_fat,
+        meal_count=len(meals)
+    )
+
+@api_router.post("/meals/recognize", response_model=PhotoRecognitionResult)
+async def recognize_food(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    try:
+        # Read image file
+        contents = await file.read()
+        
+        # Convert to base64
+        image_base64 = base64.b64encode(contents).decode('utf-8')
+        
+        # Get content type
+        content_type = file.content_type or 'image/jpeg'
+        
+        # Create Gemini chat with vision
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=f"food_recognition_{current_user['id']}_{uuid.uuid4()}",
+            system_message="You are a nutrition expert AI that identifies food from images."
+        ).with_model("gemini", "gemini-2.5-flash")
+        
+        # Create message with image
+        file_content = FileContent(
+            content_type=content_type,
+            file_content_base64=image_base64
+        )
+        
+        prompt = """Identify this food and estimate its nutritional content per serving.
+
+Return ONLY a JSON object with these exact fields (no additional text):
+{
+    "food_name": "name of the food",
+    "calories": calories per serving (number),
+    "protein": protein in grams (number),
+    "carbs": carbohydrates in grams (number),
+    "fat": fat in grams (number),
+    "serving_size": "serving size description",
+    "confidence": confidence level 0.0-1.0 (number)
+}
+
+Be specific about the food name. For serving size, describe what you see (e.g., "1 plate", "2 slices", "1 bowl")."""
+        
+        user_message = UserMessage(
+            text=prompt,
+            file_contents=[file_content]
+        )
+        
+        # Get response from Gemini
+        response = await chat.send_message(user_message)
+        
+        # Parse JSON response
+        # Remove markdown code blocks if present
+        response_text = response.strip()
+        if response_text.startswith('```json'):
+            response_text = response_text[7:]
+        if response_text.startswith('```'):
+            response_text = response_text[3:]
+        if response_text.endswith('```'):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+        
+        result = json.loads(response_text)
+        
+        return PhotoRecognitionResult(**result)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Gemini response: {response}")
+        raise HTTPException(status_code=500, detail="Failed to parse AI response")
+    except Exception as e:
+        logger.error(f"Food recognition error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to recognize food: {str(e)}")
+
 # ============== BASIC ROUTES ==============
 
 @api_router.get("/")
