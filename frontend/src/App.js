@@ -6,9 +6,9 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import Dashboard from "@/pages/Dashboard";
+import Chat from "@/pages/Chat";
 
 // Placeholder components for other routes
-const Chat = () => <div className="p-8">AI Chat - Coming Soon</div>;
 const Meals = () => <div className="p-8">Meals - Coming Soon</div>;
 const Recipes = () => <div className="p-8">Recipes - Coming Soon</div>;
 const Stores = () => <div className="p-8">Stores - Coming Soon</div>;
