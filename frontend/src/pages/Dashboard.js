@@ -18,6 +18,7 @@ const Dashboard = () => {
     { name: 'AI Chat', path: '/chat', icon: '💬' },
     { name: 'Meals', path: '/meals', icon: '🍽️' },
     { name: 'Recipes', path: '/recipes', icon: '📖' },
+    { name: 'Health', path: '/health', icon: '❤️' },
     { name: 'Stores', path: '/stores', icon: '🏪' },
     { name: 'Settings', path: '/settings', icon: '⚙️' }
   ];
